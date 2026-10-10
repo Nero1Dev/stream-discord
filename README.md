@@ -20,9 +20,13 @@ Seus amigos precisam acessar a página por um endereço público com **HTTPS**. 
 
 Depois abra o site publicado, clique em **Compartilhar tela** e mande o link para seus amigos.
 
+## Revezar quem compartilha
+
+Qualquer pessoa na sala pode clicar em **Pedir para compartilhar**. Ela já escolhe a tela nesse momento, e o pedido aparece para quem está transmitindo, que pode **Aceitar e trocar** ou **Recusar**. Se ninguém estiver transmitindo, quem clicar começa direto.
+
 ## Observações
 
-- O link funciona enquanto a sua aba estiver aberta. Se você fechar e abrir de novo, um novo link é gerado.
+- Quem criou o link coordena a sala: ela dura enquanto essa aba estiver aberta. Se fechar e abrir de novo, um novo link é gerado.
 - **Áudio**: no Chrome/Edge, marque "Compartilhar áudio" na janela de seleção da tela.
-- Cada amigo recebe uma cópia do stream enviada pelo seu upload. Com upload doméstico típico, de 3 a 5 pessoas em 1080p funciona bem.
+- Cada pessoa recebe uma cópia do stream enviada pelo upload de quem está compartilhando. Com upload doméstico típico, de 3 a 5 pessoas em 1080p funciona bem.
 - Algumas redes muito restritas (NAT simétrico, redes corporativas) podem bloquear a conexão P2P. Nesse caso seria preciso adicionar um servidor TURN na configuração do `Peer` em `app.js`.

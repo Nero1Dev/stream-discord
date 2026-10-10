@@ -19,13 +19,12 @@
     <section class="hero">
       <span class="eyebrow">● Transmissão de tela</span>
       <h1 id="title">Sua tela, <em>ao vivo</em>.</h1>
-      <p class="lead" id="subtitle">Gere um link, mande pros amigos e transmita direto do navegador. Sem instalar nada.</p>
+      <p class="lead" id="subtitle">Gere um link, mande pros amigos e revezem quem compartilha a tela. Direto do navegador, sem instalar nada.</p>
     </section>
 
-    <!-- Quem transmite -->
-    <section id="host" class="panel" hidden>
+    <section class="panel">
       <div class="link-box">
-        <span class="label">Seu link</span>
+        <span class="label">Link da sala</span>
         <div class="link-row">
           <input id="shareLink" readonly value="Gerando link…">
           <button id="copyBtn" class="btn btn-outline" disabled>Copiar</button>
@@ -33,6 +32,10 @@
       </div>
 
       <div class="controls">
+        <label class="grow">
+          <span class="label">Seu nome</span>
+          <input id="name" maxlength="24" autocomplete="nickname">
+        </label>
         <label>
           <span class="label">Qualidade</span>
           <select id="quality">
@@ -48,25 +51,24 @@
             <option value="60">60</option>
           </select>
         </label>
-        <div class="spacer"></div>
-        <button id="startBtn" class="btn btn-primary">Compartilhar tela →</button>
-        <button id="stopBtn" class="btn btn-danger" hidden>Parar transmissão</button>
+        <button id="shareBtn" class="btn btn-primary" disabled>Compartilhar tela →</button>
+        <button id="cancelBtn" class="btn btn-outline" hidden>Cancelar pedido</button>
+        <button id="stopBtn" class="btn btn-danger" hidden>Parar de compartilhar</button>
       </div>
 
-      <p class="status"><span id="hostStatus">Conectando ao servidor…</span> <span class="dot">·</span> <b id="viewerCount">0</b> assistindo</p>
-    </section>
+      <div id="requests" class="requests" hidden></div>
 
-    <!-- Quem assiste -->
-    <section id="viewer" class="panel" hidden>
-      <p class="status" id="viewerStatus">Conectando…</p>
+      <p class="status" id="status">Conectando ao servidor…</p>
+      <ul id="people" class="people"></ul>
     </section>
 
     <div class="stage">
       <video id="video" autoplay playsinline muted></video>
       <span class="live-pill" id="livePill" hidden><i></i> AO VIVO</span>
-      <div class="placeholder" id="placeholder">
+      <span class="presenter-tag" id="presenterTag" hidden></span>
+      <div class="placeholder">
         <span class="placeholder-icon"></span>
-        <span id="placeholderText">Nenhuma transmissão ainda</span>
+        <span id="placeholderText">Ninguém está compartilhando ainda</span>
       </div>
       <div class="video-actions">
         <button id="unmuteBtn" class="btn btn-glass" hidden>🔊 Ativar som</button>
@@ -74,6 +76,8 @@
       </div>
     </div>
   </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <script src="app.js"></script>
