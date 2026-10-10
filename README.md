@@ -26,7 +26,8 @@ Qualquer pessoa na sala pode clicar em **Pedir para compartilhar**. Ela já esco
 
 ## Observações
 
-- Quem criou o link coordena a sala: ela dura enquanto essa aba estiver aberta. Se fechar e abrir de novo, um novo link é gerado.
+- Quem criou o link coordena a sala (★ na lista). Se essa pessoa sair, a coordenação passa para a próxima na ordem de entrada, e assim por diante. Quem estiver compartilhando continua transmitindo durante a troca.
+- O link continua valendo enquanto alguém estiver na sala. Se a sala ficar vazia, quem abrir o link de novo reabre a sala.
 - **Áudio**: no Chrome/Edge, marque "Compartilhar áudio" na janela de seleção da tela.
 - Cada pessoa recebe uma cópia do stream enviada pelo upload de quem está compartilhando. Com upload doméstico típico, de 3 a 5 pessoas em 1080p funciona bem.
 - Algumas redes muito restritas (NAT simétrico, redes corporativas) podem bloquear a conexão P2P. Nesse caso seria preciso adicionar um servidor TURN na configuração do `Peer` em `app.js`.

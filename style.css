@@ -315,3 +315,4 @@ video { width: 100%; height: 100%; object-fit: contain; display: block; }
   box-shadow: 0 20px 40px -12px rgb(0 0 0 / 0.7);
   animation: pop 0.2s ease-out;
 }
+.people li.hub::after { content: " ★"; color: var(--nude); }

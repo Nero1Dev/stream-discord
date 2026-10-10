@@ -1,23 +1,33 @@
 // Screen-sharing rooms over WebRTC using PeerJS (free public signaling server).
 //
-// The room creator ("owner") has peer id = room id and acts as the hub: every
-// guest keeps a data connection to it, and it holds the room state
-// (participants + who is presenting) and relays share requests.
-// Whoever is presenting calls every other participant directly with their
-// screen stream. To take over, a participant picks a screen first and sends a
+// Every participant has its own "member" peer (random id). The room id is a
+// separate peer id held by whoever currently coordinates the room (the "hub"):
+// all members, including the coordinator itself, keep a data connection to it.
+// The hub holds the room state (participants in join order + who is
+// presenting) and relays share requests.
+//
+// If the coordinator leaves, the next participant in join order claims the
+// room id and becomes the new hub, seeded with the last known state; everyone
+// else reconnects. Media flows directly from the presenter to each member, so
+// an ongoing share keeps playing during the handover. Opening a link whose
+// room is empty simply reopens it.
+//
+// To present, a member picks a screen first (needs the click) and sends a
 // request; the current presenter approves or denies it.
 
 const $ = (id) => document.getElementById(id);
 const video = $("video");
 const stage = document.querySelector(".stage");
-const roomId = new URLSearchParams(location.search).get("room");
-const isOwner = !roomId;
+const params = new URLSearchParams(location.search);
+const createdRoom = !params.get("room");
+const roomId = params.get("room") || "tela-" + crypto.randomUUID().replaceAll("-", "").slice(0, 12);
 
-let peer = null;
+let peer = null; // my member peer
 let myId = null;
 let connStatus = "Conectando ao servidor…"; // overrides the status line when set
+let leaving = false;
 
-let state = { participants: [], presenter: null }; // room as this client sees it
+let state = { hub: null, participants: [], presenter: null }; // room as this client sees it
 let myStream = null; // screen I'm sharing, or waiting for approval to share
 let requesting = false;
 let userUnmuted = false;
@@ -25,12 +35,11 @@ const outgoingCalls = new Map(); // peerId -> MediaConnection (while I present)
 const remoteStreams = new Map(); // peerId -> { call, stream }
 const pendingRequests = new Map(); // peerId -> name (while I present)
 
-// Owner only
-const room = { participants: [], presenter: null };
-const guestConns = new Map(); // peerId -> DataConnection
-// Guest only
-let hostConn = null;
+let hostConn = null; // my data connection to the hub
+let attempt = 0; // invalidates stale connection attempts
 let retryTimer = null;
+let claimAfter = 0; // earliest time I may take over the room id
+let hub = null; // { peer, conns, room } while I coordinate the room
 
 // ---------------------------------------------------------------- Setup
 
@@ -40,96 +49,40 @@ const storage = {
 };
 
 $("name").value =
-  storage.get("name") || (isOwner ? "Anfitrião" : "Convidado " + Math.floor(Math.random() * 900 + 100));
+  storage.get("name") || (createdRoom ? "Anfitrião" : "Convidado " + Math.floor(Math.random() * 900 + 100));
 
-if (!isOwner) {
+if (createdRoom) {
+  // Refreshing the page rejoins the same room instead of creating another.
+  history.replaceState(null, "", `${location.pathname}?room=${roomId}`);
+} else {
   $("title").innerHTML = "Assistindo <em>ao vivo</em>.";
   $("subtitle").textContent = "Você entrou numa sala. Assista ou peça para compartilhar a sua tela.";
 }
+setLink(location.href);
 
 if (typeof Peer === "undefined") {
   connStatus = "Não foi possível carregar o PeerJS. Verifique sua internet ou desative o bloqueador de anúncios.";
   render();
 } else {
-  isOwner ? startOwner() : startGuest();
+  start();
 }
 startEmbers();
 
 // ---------------------------------------------------------------- Transport
 
-// Send a message to the room hub (handled locally when I am the owner).
 function send(msg) {
-  if (isOwner) ownerHandle(msg, myId);
-  else if (hostConn?.open) hostConn.send(msg);
+  if (hostConn?.open) hostConn.send(msg);
 }
 
-function startOwner() {
-  // Random, hard-to-guess room id so only people with the link can join.
-  peer = new Peer("tela-" + crypto.randomUUID().replaceAll("-", "").slice(0, 12));
-
-  peer.on("open", (id) => {
-    myId = id;
-    connStatus = null;
-    room.participants = [{ id, name: myName() }];
-    setLink(`${location.origin}${location.pathname}?room=${id}`);
-    broadcast();
-  });
-
-  peer.on("connection", (conn) => {
-    conn.on("open", () => guestConns.set(conn.peer, conn));
-    conn.on("data", (msg) => ownerHandle(msg, conn.peer));
-    conn.on("close", () => removeGuest(conn.peer));
-    conn.on("error", () => removeGuest(conn.peer));
-  });
-
-  setupPeerCommon();
-  window.addEventListener("beforeunload", () => peer.destroy());
-}
-
-function startGuest() {
+function start() {
   peer = new Peer();
-  setLink(location.href);
 
-  peer.on("open", (id) => {
+  peer.on("open", async (id) => {
     myId = id;
-    connectToHost();
+    if (createdRoom) await tryClaim();
+    connectToHub();
   });
 
-  peer.on("error", (err) => {
-    if (err.type === "peer-unavailable") {
-      connStatus = "Sala não encontrada (o link expirou ou quem criou fechou a aba). Tentando de novo…";
-      render();
-      scheduleRetry();
-    }
-  });
-
-  setupPeerCommon();
-  window.addEventListener("beforeunload", () => peer.destroy());
-}
-
-function connectToHost() {
-  clearTimeout(retryTimer);
-  hostConn = peer.connect(roomId, { reliable: true });
-  hostConn.on("open", () => {
-    connStatus = null;
-    hostConn.send({ type: "hello", name: myName() });
-  });
-  hostConn.on("data", onMessage);
-  hostConn.on("close", () => {
-    connStatus = "A sala foi encerrada. Tentando reconectar…";
-    requesting = false;
-    stopMyStream();
-    applyState({ participants: [], presenter: null });
-    scheduleRetry();
-  });
-}
-
-function scheduleRetry() {
-  clearTimeout(retryTimer);
-  retryTimer = setTimeout(connectToHost, 5000);
-}
-
-function setupPeerCommon() {
   peer.on("call", (call) => {
     call.answer(); // receive only
     call.on("stream", (stream) => {
@@ -144,22 +97,144 @@ function setupPeerCommon() {
     });
   });
 
-  peer.on("disconnected", () => peer.reconnect());
+  peer.on("disconnected", () => !leaving && peer.reconnect());
   peer.on("error", (err) => {
-    if (err.type !== "peer-unavailable") toast("Erro de conexão: " + err.type);
+    if (err.type === "peer-unavailable") {
+      // The room id has no holder: nobody is coordinating the room.
+      if (err.message.includes(roomId) && hostConn && !hostConn.open) onConnectFail(attempt);
+    } else {
+      toast("Erro de conexão: " + err.type);
+    }
+  });
+
+  window.addEventListener("beforeunload", () => {
+    leaving = true;
+    hub?.peer.destroy();
+    peer.destroy();
   });
 }
 
-// ---------------------------------------------------------------- Owner hub
+function connectToHub() {
+  clearTimeout(retryTimer);
+  const my = ++attempt;
+  const conn = peer.connect(roomId, { reliable: true });
+  hostConn = conn;
+  let opened = false;
+  const failTimer = setTimeout(() => !opened && onConnectFail(my), 8000);
 
-function ownerHandle(msg, from) {
+  conn.on("open", () => {
+    opened = true;
+    clearTimeout(failTimer);
+    if (my !== attempt) return conn.close();
+    connStatus = null;
+    conn.send({ type: "hello", name: myName() });
+    render();
+  });
+  conn.on("data", (msg) => conn === hostConn && onMessage(msg));
+  conn.on("close", () => {
+    clearTimeout(failTimer);
+    if (opened && conn === hostConn) onHubLost();
+  });
+}
+
+// Nobody answered at the room id: try to become the hub, otherwise retry.
+async function onConnectFail(my) {
+  if (my !== attempt || leaving) return;
+  attempt++; // ignore late events from the failed attempt
+  hostConn?.close();
+  if (!hub && Date.now() >= claimAfter && (await tryClaim())) {
+    if (state.participants.length) toast("Você agora coordena a sala.");
+    return connectToHub();
+  }
+  connStatus ||= "Procurando a sala…";
+  render();
+  clearTimeout(retryTimer);
+  retryTimer = setTimeout(connectToHub, 2000);
+}
+
+// The coordinator left. The next in join order claims the room right away;
+// the others only reconnect, and may claim it themselves only after the ones
+// ahead of them had their chance.
+function onHubLost() {
+  if (leaving) return;
+  const remaining = state.participants.filter((p) => p.id !== state.hub);
+  const index = remaining.findIndex((p) => p.id === myId);
+  const position = index < 0 ? remaining.length : index;
+  claimAfter = Date.now() + position * 4000;
+  connStatus = "Quem coordenava a sala saiu. Passando a coordenação…";
+  render();
+  clearTimeout(retryTimer);
+  retryTimer = setTimeout(async () => {
+    if (position === 0 && !hub && (await tryClaim())) toast("Você agora coordena a sala.");
+    connectToHub();
+  }, Math.min(position, 1) * 1500);
+}
+
+// Try to take the room id. Resolves true if I am now the hub.
+function tryClaim() {
+  return new Promise((resolve) => {
+    const hubPeer = new Peer(roomId);
+    let settled = false;
+    hubPeer.on("open", () => {
+      settled = true;
+      startHub(hubPeer);
+      resolve(true);
+    });
+    hubPeer.on("error", () => {
+      if (settled) return;
+      settled = true;
+      hubPeer.destroy();
+      resolve(false); // usually "unavailable-id": someone else holds the room
+    });
+  });
+}
+
+// ---------------------------------------------------------------- Hub
+
+function startHub(hubPeer) {
+  // Seed with the last known room (minus the coordinator that left), so an
+  // ongoing share is not interrupted while members reconnect.
+  const seed = state.participants.filter((p) => p.id !== state.hub);
+  const room = {
+    participants: seed.map((p) => ({ id: p.id, name: p.name, seen: false })),
+    presenter: seed.some((p) => p.id === state.presenter) ? state.presenter : null,
+  };
+  hub = { peer: hubPeer, conns: new Map(), room };
+
+  // Forget anyone from the seed who did not come back.
+  setTimeout(() => {
+    for (const p of [...room.participants]) if (!p.seen) removeMember(p.id);
+  }, 12000);
+
+  hubPeer.on("connection", (conn) => {
+    conn.on("open", () => {
+      const old = hub.conns.get(conn.peer);
+      hub.conns.set(conn.peer, conn);
+      old?.close();
+    });
+    conn.on("data", (msg) => hubHandle(msg, conn.peer));
+    const drop = () => {
+      // Ignore when I'm closing the tab (connections close one by one) or
+      // when this connection was replaced by a newer one from the same member.
+      if (leaving || hub.conns.get(conn.peer) !== conn) return;
+      hub.conns.delete(conn.peer);
+      removeMember(conn.peer);
+    };
+    conn.on("close", drop);
+    conn.on("error", drop);
+  });
+  hubPeer.on("disconnected", () => !leaving && hubPeer.reconnect());
+}
+
+function hubHandle(msg, from) {
+  const { room } = hub;
   const known = room.participants.find((p) => p.id === from);
   if (!known && msg.type !== "hello") return;
 
   switch (msg.type) {
     case "hello":
-      if (known) known.name = cleanName(msg.name);
-      else room.participants.push({ id: from, name: cleanName(msg.name) });
+      if (known) Object.assign(known, { name: cleanName(msg.name), seen: true });
+      else room.participants.push({ id: from, name: cleanName(msg.name), seen: true });
       broadcast();
       break;
     case "request":
@@ -192,18 +267,23 @@ function ownerHandle(msg, from) {
 }
 
 function deliver(id, msg) {
-  if (id === myId) onMessage(msg);
-  else guestConns.get(id)?.send(msg);
+  const conn = hub.conns.get(id);
+  if (conn?.open) conn.send(msg);
 }
 
 function broadcast() {
-  const msg = { type: "state", participants: room.participants, presenter: room.presenter };
-  for (const conn of guestConns.values()) if (conn.open) conn.send(msg);
-  onMessage(structuredClone(msg));
+  const { room } = hub;
+  const msg = {
+    type: "state",
+    hub: myId,
+    participants: room.participants.map(({ id, name }) => ({ id, name })),
+    presenter: room.presenter,
+  };
+  for (const conn of hub.conns.values()) if (conn.open) conn.send(msg);
 }
 
-function removeGuest(id) {
-  guestConns.delete(id);
+function removeMember(id) {
+  const { room } = hub;
   if (!room.participants.some((p) => p.id === id)) return;
   room.participants = room.participants.filter((p) => p.id !== id);
   if (room.presenter === id) room.presenter = null;
@@ -236,7 +316,7 @@ function onMessage(msg) {
 
 function applyState(next) {
   const prevPresenter = state.presenter;
-  state = { participants: next.participants, presenter: next.presenter };
+  state = { hub: next.hub, participants: next.participants, presenter: next.presenter };
   const wasPresenter = prevPresenter === myId;
   const amPresenter = state.presenter === myId;
 
@@ -372,8 +452,11 @@ function render() {
   // Video
   const mine = amPresenter && !!myStream;
   const stream = mine ? myStream : remoteStreams.get(state.presenter)?.stream ?? null;
-  if (video.srcObject !== stream) video.srcObject = stream;
   video.muted = mine || !userUnmuted; // never play my own audio back
+  if (video.srcObject !== stream) {
+    video.srcObject = stream;
+    if (stream) video.play().catch(() => {});
+  }
   stage.classList.toggle("playing", !!stream);
   $("livePill").hidden = !stream;
   $("fullscreenBtn").hidden = !stream;
@@ -431,6 +514,10 @@ function render() {
     const li = document.createElement("li");
     li.textContent = p.name + (p.id === myId ? " (você)" : "");
     if (p.id === state.presenter) li.classList.add("presenting");
+    if (p.id === state.hub) {
+      li.classList.add("hub");
+      li.title = "Coordena a sala";
+    }
     list.append(li);
   }
 }
