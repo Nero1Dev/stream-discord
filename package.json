@@ -1,0 +1,9 @@
+{
+  "name": "stream-discord",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Compartilhe sua tela com amigos por um link (WebRTC)",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
