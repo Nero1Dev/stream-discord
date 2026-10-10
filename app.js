@@ -39,7 +39,7 @@ function startHost() {
   const updateCount = () => ($("viewerCount").textContent = viewers.size);
 
   // Random, hard-to-guess room id so only people with the link can join.
-  const peer = new Peer("tz-" + crypto.randomUUID().replaceAll("-", "").slice(0, 12));
+  const peer = new Peer("tela-" + crypto.randomUUID().replaceAll("-", "").slice(0, 12));
 
   peer.on("open", (id) => {
     $("shareLink").value = `${location.origin}${location.pathname}?room=${id}`;

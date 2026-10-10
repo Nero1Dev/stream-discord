@@ -1,4 +1,4 @@
-# TryZenu Stream
+# Stream de Tela
 
 Compartilhe sua tela com amigos por um link. O vídeo vai direto do seu navegador para o deles (WebRTC peer-to-peer via [PeerJS](https://peerjs.com)), sem servidor de vídeo.
 
